@@ -7,6 +7,9 @@ use Illuminate\Http\Request;
 use App\Modules\Prueba\Models\Activity;
 use App\Modules\Prueba\Models\ActivityLog;
 use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\Log;
+use Carbon\Carbon;
+
 
 class ActivityController extends Controller
 {
@@ -165,19 +168,21 @@ class ActivityController extends Controller
      */
     public function dashboard(Request $request)
     {
-        $query = Activity::with(['operator', 'process', 'supervisor'])
-            ->whereIn('status', ['OPEN', 'CLOSED']);
+        $query = Activity::with([
+            'operator:id,name',
+            'process:id,name,base_per_hour',
+            'supervisor:id,name'
+        ])->whereIn('status', ['OPEN', 'CLOSED']);
 
-        if ($request->date_from)   $query->whereDate('start_time', '>=', $request->date_from);
-        if ($request->date_to)     $query->whereDate('start_time', '<=', $request->date_to);
-        if ($request->operator_id) $query->where('operator_id', $request->operator_id);
-        if ($request->process_id)  $query->where('process_id', $request->process_id);
+        if ($request->filled('date_from'))   $query->whereDate('start_time', '>=', $request->date_from);
+        if ($request->filled('date_to'))     $query->whereDate('start_time', '<=', $request->date_to);
+        if ($request->filled('operator_id')) $query->where('operator_id', $request->operator_id);
+        if ($request->filled('process_id'))  $query->where('process_id',  $request->process_id);
 
         $activities = $query->orderBy('start_time', 'desc')->get();
+        $closed     = $activities->where('status', 'CLOSED');
 
-        // ── MÉTRICAS GENERALES ──────────────────────────────────────────
-        $closed = $activities->where('status', 'CLOSED');
-
+        // ── MÉTRICAS ────────────────────────────────────────────────────
         $metrics = [
             'total'                => $activities->count(),
             'open'                 => $activities->where('status', 'OPEN')->count(),
@@ -188,40 +193,70 @@ class ActivityController extends Controller
                 ->avg(fn($a) => $a->start_time->diffInMinutes($a->end_time)) ?? 0,
         ];
 
-        // ── HELPER: calcular estándar de una actividad ──────────────────
-        // Estándar = (base_per_hour / 60) × minutos_trabajados
-        $calcStandard = function ($activity) {
-            if (!$activity->end_time || !$activity->start_time) return 0;
-            $minutes     = $activity->start_time->diffInMinutes($activity->end_time);
-            $basePerMin  = ($activity->process->base_per_hour ?? 0) / 60;
-            return $basePerMin * $minutes;
+        // ── HELPER: estándar ────────────────────────────────────────────
+        $calcStandard = function ($activity): float {
+            if (!$activity->end_time || !$activity->start_time) return 0.0;
+            $minutes     = $activity->start_time->diffInSeconds($activity->end_time) / 60;
+            $basePerHour = (float) ($activity->process->base_per_hour ?? 0);
+            if ($basePerHour <= 0) return 0.0;
+            return ($basePerHour / 60) * $minutes;
         };
 
         // ── EFECTIVIDAD POR OPERADOR ────────────────────────────────────
-        $byOperator = $closed
-            ->groupBy('operator_id')
-            ->map(function ($group) use ($calcStandard) {
-                $real     = $group->sum('quantity');
-                $standard = $group->sum(fn($a) => $calcStandard($a));
-                return [
-                    'operator_id'        => $group->first()->operator_id,
-                    'name'               => $group->first()->operator->name ?? '—',
-                    'activities_count'   => $group->count(),
-                    'total_real'         => $real,
-                    'total_standard'     => round($standard, 2),
-                    'effectiveness'      => $standard > 0
-                        ? round(($real / $standard) * 100, 1)
-                        : null,
-                ];
-            })
-            ->values();
+$byOperator = $closed
+    ->groupBy('operator_id')
+    ->map(function ($group) use ($calcStandard) {
+        $real     = (float) $group->sum('quantity');
+        $standard = (float) $group->sum(fn($a) => $calcStandard($a));
+
+        // ✅ NUEVO: actividades individuales con efectividad por actividad
+        $activities = $group->map(function ($a) use ($calcStandard) {
+            $std      = $calcStandard($a);
+            $qty      = (float) $a->quantity;
+            $minutes  = ($a->start_time && $a->end_time)
+                ? $a->start_time->diffInSeconds($a->end_time) / 60
+                : 0;
+
+            return [
+                'id'           => $a->id,
+                'name'         => $a->process->name ?? '—',
+                // tiempo formateado legible: "45 min" o "1h 20min"
+                'time'         => $minutes > 0
+                    ? ($minutes >= 60
+                        ? floor($minutes / 60) . 'h ' . ($minutes % 60) . 'min'
+                        : round($minutes) . ' min')
+                    : '—',
+                'standard'     => round($std, 2),
+                'real'         => $qty,
+                // Efectividad por actividad = (Real / Estándar) × 100
+                'effectiveness' => $std > 0
+                    ? round(($qty / $std) * 100, 1)
+                    : null,
+            ];
+        })->values();
+
+        return [
+            'operator_id'      => $group->first()->operator_id,
+            'name'             => $group->first()->operator->name ?? '—',
+            'activities_count' => $group->count(),
+            'total_real'       => $real,
+            'total_standard'   => round($standard, 2),
+            'effectiveness'    => $standard > 0
+                ? round(($real / $standard) * 100, 1)
+                : null,
+            'no_standard_data' => $standard <= 0,
+            'activities'       => $activities, // ✅ esto alimenta el detalle del HTML
+        ];
+    })
+    ->values();
 
         // ── EFECTIVIDAD POR PROCESO ─────────────────────────────────────
+        // ✅ FIX: separado de nuevo, acceso directo a ->process->name
         $byProcess = $closed
             ->groupBy('process_id')
             ->map(function ($group) use ($calcStandard) {
-                $real     = $group->sum('quantity');
-                $standard = $group->sum(fn($a) => $calcStandard($a));
+                $real     = (float) $group->sum('quantity');
+                $standard = (float) $group->sum(fn($a) => $calcStandard($a));
                 return [
                     'process_id'       => $group->first()->process_id,
                     'name'             => $group->first()->process->name ?? '—',
@@ -231,6 +266,7 @@ class ActivityController extends Controller
                     'effectiveness'    => $standard > 0
                         ? round(($real / $standard) * 100, 1)
                         : null,
+                    'no_standard_data' => $standard <= 0,
                 ];
             })
             ->values();
@@ -241,7 +277,55 @@ class ActivityController extends Controller
             'effectiveness' => [
                 'by_operator' => $byOperator,
                 'by_process'  => $byProcess,
-            ]
+            ],
+            // ✅ debug expandido — ahora muestra los valores calculados
+            'debug' => app()->environment('local') ? [
+                'closed_count'    => $closed->count(),
+                'operators_found' => $byOperator->pluck('name'),
+                'processes_found' => $byProcess->pluck('name'),
+                // 🔍 NUEVO: muestra exactamente qué se calculó
+                'effectiveness_sample' => $byOperator->map(fn($op) => [
+                    'operator'       => $op['name'],
+                    'real'           => $op['total_real'],
+                    'standard'       => $op['total_standard'],
+                    'effectiveness'  => $op['effectiveness'],
+                    'no_std_data'    => $op['no_standard_data'],
+                ]),
+            ] : null,
         ]);
+    }
+
+    /**
+ * 🔹 REPORTE MANUAL
+ */
+   public function reportManual(Request $request)
+{
+    $request->validate([
+        'operator_id' => 'required|exists:users,id',
+        'process_id'  => 'required|exists:processes,id',
+        'start_time'  => 'required|date',
+        'end_time'    => 'required|date|after:start_time',
+        'quantity'    => 'required|integer|min:0',
+    ]);
+
+    try {
+        $activity = Activity::create([
+            'operator_id'   => $request->operator_id,
+            'process_id'    => $request->process_id,
+            'supervisor_id' => Auth::id(),
+            'start_time'    => Carbon::parse($request->start_time, 'America/Caracas')->utc(),
+            'end_time'      => Carbon::parse($request->end_time,   'America/Caracas')->utc(),
+            'quantity'      => $request->quantity,
+            'status'        => 'CLOSED',
+        ]);
+
+        return response()->json([
+            'message' => 'Reporte registrado correctamente',
+            'data'    => $activity->load(['operator', 'process'])
+        ], 201);
+
+         } catch (\Exception $e) {
+        return response()->json(['error' => $e->getMessage()], 500);
+        }
     }
 }

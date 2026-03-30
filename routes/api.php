@@ -15,20 +15,21 @@ Route::get('/user', function (Request $request) {
 Route::prefix('activities')->group(function () {
 
     // 🔥 RUTAS ESPECÍFICAS PRIMERO
-    Route::get('/history', [ActivityController::class, 'history']);
-    Route::get('/open',    [ActivityController::class, 'open']);
+    Route::get('/history',        [ActivityController::class, 'history']);
+    Route::get('/open',           [ActivityController::class, 'open']);
 
     // 🔹 ACCIONES
-    Route::post('/start',       [ActivityController::class, 'start']);
-    Route::post('/{id}/stop',   [ActivityController::class, 'stop']);
-    Route::post('/{id}/cancel', [ActivityController::class, 'cancel']);
+    Route::post('/start',         [ActivityController::class, 'start']);
+    Route::post('/report-manual', [ActivityController::class, 'reportManual']); // ✅ aquí
+    Route::post('/{id}/stop',     [ActivityController::class, 'stop']);
+    Route::post('/{id}/cancel',   [ActivityController::class, 'cancel']);
 
     // 🔹 DASHBOARD
-    Route::get('/dashboard',     [ActivityController::class, 'dashboard']);
+    Route::get('/dashboard',      [ActivityController::class, 'dashboard']);
 
     // 🔹 GENERALES
-    Route::get('/',       [ActivityController::class, 'index']);
-    Route::get('/{id}',   [ActivityController::class, 'show']); // 🔥 SIEMPRE DE ÚLTIMA
+    Route::get('/',               [ActivityController::class, 'index']);
+    Route::get('/{id}',           [ActivityController::class, 'show']); // 🔥 SIEMPRE DE ÚLTIMA
 });
 
 // Procesos

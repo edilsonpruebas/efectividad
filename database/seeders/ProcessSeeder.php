@@ -10,9 +10,9 @@ class ProcessSeeder extends Seeder
     public function run(): void
     {
         $processes = [
-            ['name' => 'Doblado',  'is_active' => true],  // 👈 is_active
-            ['name' => 'Corte',    'is_active' => true],  // 👈 is_active
-            ['name' => 'Envibado', 'is_active' => true],  // 👈 is_active
+            ['name' => 'Doblado',  'is_active' => true, 'base_per_hour' => 210],  
+            ['name' => 'Corte',    'is_active' => true, 'base_per_hour' => 213.6],  
+            ['name' => 'Envibado', 'is_active' => true, 'base_per_hour' => 240],  
         ];
 
         foreach ($processes as $process) {
@@ -20,3 +20,7 @@ class ProcessSeeder extends Seeder
         }
     }
 }
+
+//doblado de bata cirujano: 210/h BASE
+//ENVIVADO: 240/h BASE
+//Corte bata cirujano: 213.6/h BASE
