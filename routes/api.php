@@ -1,9 +1,10 @@
-<?php 
+<?php
 
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Route;
 use App\Modules\Prueba\Controllers\ActivityController;
 use App\Modules\Prueba\Controllers\ProcessController;
+use App\Modules\Prueba\Controllers\OperatorController;  // ← agregado
 use App\Modules\Prueba\Models\User;
 
 // Ruta de usuario autenticado
@@ -11,31 +12,35 @@ Route::get('/user', function (Request $request) {
     return $request->user();
 })->middleware('auth:sanctum');
 
-// Rutas de actividades
+// ── ACTIVIDADES ───────────────────────────────────────
 Route::prefix('activities')->group(function () {
-
-    // 🔥 RUTAS ESPECÍFICAS PRIMERO
     Route::get('/history',        [ActivityController::class, 'history']);
     Route::get('/open',           [ActivityController::class, 'open']);
-
-    // 🔹 ACCIONES
     Route::post('/start',         [ActivityController::class, 'start']);
-    Route::post('/report-manual', [ActivityController::class, 'reportManual']); // ✅ aquí
+    Route::post('/report-manual', [ActivityController::class, 'reportManual']);
     Route::post('/{id}/stop',     [ActivityController::class, 'stop']);
     Route::post('/{id}/cancel',   [ActivityController::class, 'cancel']);
-
-    // 🔹 DASHBOARD
     Route::get('/dashboard',      [ActivityController::class, 'dashboard']);
-
-    // 🔹 GENERALES
     Route::get('/',               [ActivityController::class, 'index']);
-    Route::get('/{id}',           [ActivityController::class, 'show']); // 🔥 SIEMPRE DE ÚLTIMA
+    Route::get('/{id}',           [ActivityController::class, 'show']);
 });
 
-// Procesos
-Route::get('/processes', [ProcessController::class, 'index']);
+// ── PROCESOS ──────────────────────────────────────────
+Route::prefix('processes')->group(function () {
+    Route::get('/all',           [ProcessController::class, 'all']);      // todos
+    Route::get('/',              [ProcessController::class, 'index']);     // solo activos (original)
+    Route::post('/',             [ProcessController::class, 'store']);
+    Route::put('/{id}',          [ProcessController::class, 'update']);
+    Route::patch('/{id}/toggle', [ProcessController::class, 'toggle']);
+    Route::delete('/{id}',       [ProcessController::class, 'destroy']);
+});
 
-// Operadores
-Route::get('/operators', function () {
-    return User::operators()->get(['id', 'name']);
+// ── OPERADORES ────────────────────────────────────────
+Route::prefix('operators')->group(function () {
+    Route::get('/active',        [OperatorController::class, 'active']);   // solo activos
+    Route::get('/',              [OperatorController::class, 'index']);     // todos
+    Route::post('/',             [OperatorController::class, 'store']);
+    Route::put('/{id}',          [OperatorController::class, 'update']);
+    Route::patch('/{id}/toggle', [OperatorController::class, 'toggle']);
+    Route::delete('/{id}',       [OperatorController::class, 'destroy']);
 });

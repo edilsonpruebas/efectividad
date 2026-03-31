@@ -12,11 +12,13 @@ class Process extends Model
     protected $fillable = [
         'name',
         'description',
-        'is_active'
+        'base_per_hour',  // ← agregado
+        'is_active',
     ];
 
     protected $casts = [
-        'is_active' => 'boolean',
+        'is_active'      => 'boolean',
+        'base_per_hour'  => 'decimal:2',  // ← agregado
     ];
 
     // 🔗 RELACIONES

@@ -14,12 +14,17 @@ class User extends Authenticatable
         'name',
         'email',
         'password',
-        'role'
+        'role',
+        'is_active',   // ← agregado
     ];
 
     protected $hidden = [
         'password',
         'remember_token',
+    ];
+
+    protected $casts = [
+        'is_active' => 'boolean',  // ← agregado
     ];
 
     // 🔗 RELACIONES
@@ -44,6 +49,11 @@ class User extends Authenticatable
     public function scopeOperators($query)
     {
         return $query->where('role', 'OPERADOR');
+    }
+
+    public function scopeActiveOperators($query)
+    {
+        return $query->where('role', 'OPERADOR')->where('is_active', true); // ← agregado
     }
 
     public function scopeSupervisors($query)
