@@ -429,4 +429,44 @@ class ActivityController extends Controller
             return response()->json(['error' => $e->getMessage()], 500);
         }
     }
+
+    /**
+ * 🔹 AGREGAR / ACTUALIZAR OBSERVACIÓN
+ */
+public function addNote(Request $request, $id)
+{
+    $request->validate([
+        'notes' => 'required|string|max:1000',
+    ]);
+
+    $activity = Activity::findOrFail($id);
+
+    $activity->update(['notes' => $request->notes]);
+
+    ActivityLog::create([
+        'activity_id' => $activity->id,
+        'action'      => 'NOTE',
+        'user_id'     => Auth::id() ?? null,
+        'timestamp'   => now()
+    ]);
+
+    return response()->json([
+        'message' => 'Observación guardada',
+        'data'    => $activity->load(['operator', 'process'])
+    ]);
+}
+
+/**
+ * 🔹 OBTENER OBSERVACIÓN DE UNA ACTIVIDAD
+ */
+public function getNote($id)
+{
+    $activity = Activity::findOrFail($id);
+
+    return response()->json([
+        'activity_id' => $activity->id,
+        'notes'       => $activity->notes,
+        'updated_at'  => $activity->updated_at,
+    ]);
+}
 }

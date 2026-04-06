@@ -20,6 +20,8 @@ Route::prefix('activities')->group(function () {
     Route::post('/report-manual', [ActivityController::class, 'reportManual']);
     Route::post('/{id}/stop',     [ActivityController::class, 'stop']);
     Route::post('/{id}/cancel',   [ActivityController::class, 'cancel']);
+    Route::post('/{id}/note',  [ActivityController::class, 'addNote']);
+    Route::get('/{id}/note',   [ActivityController::class, 'getNote']);
     Route::get('/dashboard',      [ActivityController::class, 'dashboard']);
     Route::get('/',               [ActivityController::class, 'index']);
     Route::get('/{id}',           [ActivityController::class, 'show']);
