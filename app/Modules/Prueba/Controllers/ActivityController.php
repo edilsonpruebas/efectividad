@@ -1,7 +1,7 @@
 <?php
-
+ 
 namespace App\Modules\Prueba\Controllers;
-
+ 
 use App\Http\Controllers\Controller;
 use Illuminate\Http\Request;
 use App\Modules\Prueba\Models\Activity;
@@ -9,10 +9,68 @@ use App\Modules\Prueba\Models\ActivityLog;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Log;
 use Carbon\Carbon;
-
-
+ 
+ 
 class ActivityController extends Controller
 {
+    // ══════════════════════════════════════════════════════════════════════
+    // HELPERS PRIVADOS
+    // ══════════════════════════════════════════════════════════════════════
+ 
+    /**
+     * Calcula la producción estándar esperada de una actividad.
+     * Estándar = (base_per_hour / 60) × duración_en_minutos
+     */
+    private function calcStandard($activity): float
+    {
+        if (!$activity->end_time || !$activity->start_time) return 0.0;
+        $minutes = $activity->start_time->diffInSeconds($activity->end_time) / 60;
+        $base    = (float) ($activity->process->base_per_hour ?? 0);
+        if ($base <= 0) return 0.0;
+        return ($base / 60) * $minutes;
+    }
+ 
+    /**
+     * Calcula el promedio ponderado multiactividad de un grupo de actividades.
+     *
+     * Fórmula (igual que Excel):
+     *   CA       = Σ horas de todas las actividades
+     *   peso_i   = horas_actividad_i / CA
+     *   aporte_i = efectividad_i × peso_i
+     *   E_total  = Σ aporte_i
+     *
+     * El peso es proporcional SOLO al tiempo (no a la base), replicando
+     * exactamente la fórmula =((F+G/60)/$CA$)*(J/100) del Excel.
+     */
+    private function calcWeighted($group): float
+    {
+        // CA: total de horas de todas las actividades del operador
+        $totalHoras = $group->sum(function ($a) {
+            if (!$a->start_time || !$a->end_time) return 0;
+            return $a->start_time->diffInSeconds($a->end_time) / 3600;
+        });
+ 
+        if ($totalHoras <= 0) return 0.0;
+ 
+        return $group->sum(function ($a) use ($totalHoras) {
+            $std   = $this->calcStandard($a);
+            $qty   = (float) $a->quantity;
+            $horas = ($a->start_time && $a->end_time)
+                ? $a->start_time->diffInSeconds($a->end_time) / 3600
+                : 0;
+ 
+            $efectividad = $std > 0 ? ($qty / $std) : 0;
+            $peso        = $horas / $totalHoras;
+ 
+            return $efectividad * $peso;
+        });
+    }
+ 
+ 
+    // ══════════════════════════════════════════════════════════════════════
+    // ENDPOINTS
+    // ══════════════════════════════════════════════════════════════════════
+ 
     /**
      * 🔹 START (FASE 1)
      */
@@ -22,7 +80,7 @@ class ActivityController extends Controller
             'process_id'  => 'required|exists:processes,id',
             'operator_id' => 'required|exists:users,id',
         ]);
-
+ 
         try {
             $activity = Activity::create([
                 'process_id'    => $request->process_id,
@@ -31,7 +89,7 @@ class ActivityController extends Controller
                 'start_time'    => now(),
                 'status'        => 'OPEN'
             ]);
-
+ 
             if ($activity && $activity->id) {
                 ActivityLog::create([
                     'activity_id' => $activity->id,
@@ -40,17 +98,17 @@ class ActivityController extends Controller
                     'timestamp'   => now()
                 ]);
             }
-
+ 
             return response()->json([
                 'message' => 'Actividad iniciada',
                 'data'    => $activity->load(['operator', 'process'])
             ], 201);
-
+ 
         } catch (\Exception $e) {
             return response()->json(['error' => $e->getMessage()], 500);
         }
     }
-
+ 
     /**
      * 🔹 STOP (FASE 2)
      */
@@ -59,44 +117,44 @@ class ActivityController extends Controller
         $request->validate([
             'quantity' => 'required|integer|min:0'
         ]);
-
+ 
         $activity = Activity::findOrFail($id);
-
+ 
         if (!$activity->isOpen()) {
             return response()->json(['error' => 'La actividad ya está cerrada'], 400);
         }
-
+ 
         $activity->close($request->quantity);
-
+ 
         return response()->json([
             'message' => 'Actividad finalizada',
             'data'    => $activity->load(['operator', 'process'])
         ]);
     }
-
+ 
     /**
      * 🔹 CANCELAR
      */
     public function cancel($id)
     {
         $activity = Activity::findOrFail($id);
-
+ 
         if (!$activity->isOpen()) {
             return response()->json(['error' => 'Solo actividades abiertas pueden cancelarse'], 400);
         }
-
+ 
         $activity->update(['status' => 'CANCELLED', 'end_time' => now()]);
-
+ 
         ActivityLog::create([
             'activity_id' => $activity->id,
             'action'      => 'CANCEL',
             'user_id'     => Auth::id() ?? null,
             'timestamp'   => now()
         ]);
-
+ 
         return response()->json(['message' => 'Actividad cancelada']);
     }
-
+ 
     /**
      * 🔹 LISTAR ABIERTAS
      */
@@ -106,10 +164,10 @@ class ActivityController extends Controller
             ->open()
             ->orderBy('start_time', 'asc')
             ->get();
-
+ 
         return response()->json($activities);
     }
-
+ 
     /**
      * 🔹 HISTORIAL
      */
@@ -121,8 +179,8 @@ class ActivityController extends Controller
             ->limit(10)
             ->get()
             ->map(function ($activity) {
-                $start = \Carbon\Carbon::parse($activity->start_time);
-                $end   = \Carbon\Carbon::parse($activity->end_time);
+                $start = Carbon::parse($activity->start_time);
+                $end   = Carbon::parse($activity->end_time);
                 return [
                     'id'               => $activity->id,
                     'operator'         => $activity->operator->name,
@@ -134,22 +192,22 @@ class ActivityController extends Controller
                 ];
             });
     }
-
+ 
     /**
      * 🔹 INDEX
      */
     public function index(Request $request)
     {
         $query = Activity::with(['operator', 'process', 'supervisor']);
-
+ 
         if ($request->date)        $query->whereDate('start_time', $request->date);
         if ($request->operator_id) $query->where('operator_id', $request->operator_id);
         if ($request->process_id)  $query->where('process_id', $request->process_id);
         if ($request->status)      $query->where('status', $request->status);
-
+ 
         return response()->json($query->orderBy('start_time', 'desc')->get());
     }
-
+ 
     /**
      * 🔹 DETALLE
      */
@@ -157,14 +215,12 @@ class ActivityController extends Controller
     {
         $activity = Activity::with(['operator', 'process', 'supervisor', 'logs'])
             ->findOrFail($id);
-
+ 
         return response()->json($activity);
     }
-
+ 
     /**
      * 🔹 DASHBOARD DE EFECTIVIDAD
-     * Efectividad = (Σ Real / Σ Estándar) × 100
-     * Estándar = (base_per_hour / 60) × duración_en_minutos
      */
     public function dashboard(Request $request)
     {
@@ -173,16 +229,16 @@ class ActivityController extends Controller
             'process:id,name,base_per_hour',
             'supervisor:id,name'
         ])->whereIn('status', ['OPEN', 'CLOSED']);
-
+ 
         if ($request->filled('date_from'))   $query->whereDate('start_time', '>=', $request->date_from);
         if ($request->filled('date_to'))     $query->whereDate('start_time', '<=', $request->date_to);
         if ($request->filled('operator_id')) $query->where('operator_id', $request->operator_id);
         if ($request->filled('process_id'))  $query->where('process_id',  $request->process_id);
-
+ 
         $activities = $query->orderBy('start_time', 'desc')->get();
         $closed     = $activities->where('status', 'CLOSED');
-
-        // ── MÉTRICAS ─────────────────────────────────────────────────────
+ 
+        // ── MÉTRICAS ──────────────────────────────────────────────────────
         $metrics = [
             'total'                => $activities->count(),
             'open'                 => $activities->where('status', 'OPEN')->count(),
@@ -192,56 +248,21 @@ class ActivityController extends Controller
                 ->filter(fn($a) => $a->end_time && $a->start_time)
                 ->avg(fn($a) => $a->start_time->diffInMinutes($a->end_time)) ?? 0,
         ];
-
-        // ── HELPER: estándar ──────────────────────────────────────────────
-        $calcStandard = function ($activity): float {
-            if (!$activity->end_time || !$activity->start_time) return 0.0;
-            $minutes     = $activity->start_time->diffInSeconds($activity->end_time) / 60;
-            $basePerHour = (float) ($activity->process->base_per_hour ?? 0);
-            if ($basePerHour <= 0) return 0.0;
-            return ($basePerHour / 60) * $minutes;
-        };
-
-        // ── HELPER: efectividad ponderada ─────────────────────────────────
-        // AÑADIDO: extrae la lógica de weightedEffectiveness() para reutilizarla
-        // aquí dentro del dashboard y así evitar una segunda llamada HTTP
-        $calcWeighted = function ($group) use ($calcStandard): float {
-            $totalFactor = $group->sum(function ($a) {
-                if (!$a->start_time || !$a->end_time) return 0;
-                $minutes = $a->start_time->diffInSeconds($a->end_time) / 60;
-                $base    = (float) ($a->process->base_per_hour ?? 0);
-                return $minutes * $base;
-            });
-
-            if ($totalFactor <= 0) return 0.0;
-
-            return $group->sum(function ($a) use ($calcStandard, $totalFactor) {
-                $std     = $calcStandard($a);
-                $qty     = (float) $a->quantity;
-                $minutes = ($a->start_time && $a->end_time)
-                    ? $a->start_time->diffInSeconds($a->end_time) / 60
-                    : 0;
-                $base    = (float) ($a->process->base_per_hour ?? 0);
-                $eff     = $std > 0 ? ($qty / $std) : 0;
-                $peso    = ($minutes * $base) / $totalFactor;
-                return $eff * $peso;
-            });
-        };
-
+ 
         // ── EFECTIVIDAD POR OPERADOR ──────────────────────────────────────
         $byOperator = $closed
             ->groupBy('operator_id')
-            ->map(function ($group) use ($calcStandard, $calcWeighted) {
+            ->map(function ($group) {
                 $real     = (float) $group->sum('quantity');
-                $standard = (float) $group->sum(fn($a) => $calcStandard($a));
-
-                $activities = $group->map(function ($a) use ($calcStandard) {
-                    $std     = $calcStandard($a);
+                $standard = (float) $group->sum(fn($a) => $this->calcStandard($a));
+ 
+                $activitiesDetail = $group->map(function ($a) {
+                    $std     = $this->calcStandard($a);
                     $qty     = (float) $a->quantity;
                     $minutes = ($a->start_time && $a->end_time)
                         ? $a->start_time->diffInSeconds($a->end_time) / 60
                         : 0;
-
+ 
                     return [
                         'id'            => $a->id,
                         'name'          => $a->process->name ?? '—',
@@ -257,7 +278,7 @@ class ActivityController extends Controller
                             : null,
                     ];
                 })->values();
-
+ 
                 return [
                     'operator_id'            => $group->first()->operator_id,
                     'name'                   => $group->first()->operator->name ?? '—',
@@ -268,33 +289,55 @@ class ActivityController extends Controller
                         ? round(($real / $standard) * 100, 1)
                         : null,
                     'no_standard_data'       => $standard <= 0,
-                    // AÑADIDO: campo que faltaba y causaba undefined% en el HTML
-                    'weighted_effectiveness' => round($calcWeighted($group) * 100, 1),
-                    'activities'             => $activities,
+                    'weighted_effectiveness' => round($this->calcWeighted($group) * 100, 1),
+                    'activities'             => $activitiesDetail,
                 ];
             })
             ->values();
-
+ 
         // ── EFECTIVIDAD POR PROCESO ───────────────────────────────────────
         $byProcess = $closed
             ->groupBy('process_id')
-            ->map(function ($group) use ($calcStandard) {
+            ->map(function ($group) {
                 $real     = (float) $group->sum('quantity');
-                $standard = (float) $group->sum(fn($a) => $calcStandard($a));
+                $standard = (float) $group->sum(fn($a) => $this->calcStandard($a));
+ 
+                // CA: total de horas del proceso en todas sus actividades
+                $totalHoras = $group->sum(function ($a) {
+                    if (!$a->start_time || !$a->end_time) return 0;
+                    return $a->start_time->diffInSeconds($a->end_time) / 3600;
+                });
+ 
+                // Ponderado: cada actividad del proceso aporta según su peso en horas
+                $weighted = $totalHoras > 0
+                    ? $group->sum(function ($a) use ($totalHoras) {
+                        $std   = $this->calcStandard($a);
+                        $qty   = (float) $a->quantity;
+                        $horas = ($a->start_time && $a->end_time)
+                            ? $a->start_time->diffInSeconds($a->end_time) / 3600
+                            : 0;
+                        $efectividad = $std > 0 ? ($qty / $std) : 0;
+                        $peso        = $horas / $totalHoras;
+                        return $efectividad * $peso;
+                    })
+                    : 0;
+ 
                 return [
-                    'process_id'       => $group->first()->process_id,
-                    'name'             => $group->first()->process->name ?? '—',
-                    'activities_count' => $group->count(),
-                    'total_real'       => $real,
-                    'total_standard'   => round($standard, 2),
-                    'effectiveness'    => $standard > 0
+                    'process_id'             => $group->first()->process_id,
+                    'name'                   => $group->first()->process->name ?? '—',
+                    'activities_count'       => $group->count(),
+                    'total_real'             => $real,
+                    'total_standard'         => round($standard, 2),
+                    'total_horas'            => round($totalHoras, 4),
+                    'effectiveness'          => $standard > 0
                         ? round(($real / $standard) * 100, 1)
                         : null,
-                    'no_standard_data' => $standard <= 0,
+                    'weighted_effectiveness' => round($weighted * 100, 1),
+                    'no_standard_data'       => $standard <= 0,
                 ];
             })
             ->values();
-
+ 
         return response()->json([
             'activities'    => $activities,
             'metrics'       => $metrics,
@@ -303,25 +346,29 @@ class ActivityController extends Controller
                 'by_process'  => $byProcess,
             ],
             'debug' => app()->environment('local') ? [
-                'closed_count'    => $closed->count(),
-                'operators_found' => $byOperator->pluck('name'),
-                'processes_found' => $byProcess->pluck('name'),
+                'closed_count'         => $closed->count(),
+                'operators_found'      => $byOperator->pluck('name'),
+                'processes_found'      => $byProcess->pluck('name'),
                 'effectiveness_sample' => $byOperator->map(fn($op) => [
-                    'operator'              => $op['name'],
-                    'real'                  => $op['total_real'],
-                    'standard'              => $op['total_standard'],
-                    'effectiveness'         => $op['effectiveness'],
-                    'weighted_effectiveness'=> $op['weighted_effectiveness'],
-                    'no_std_data'           => $op['no_standard_data'],
+                    'operator'               => $op['name'],
+                    'real'                   => $op['total_real'],
+                    'standard'               => $op['total_standard'],
+                    'effectiveness'          => $op['effectiveness'],
+                    'weighted_effectiveness' => $op['weighted_effectiveness'],
+                    'no_std_data'            => $op['no_standard_data'],
                 ]),
             ] : null,
         ]);
     }
-
+ 
     /**
      * 🔹 EFECTIVIDAD PONDERADA (PESO DINÁMICO)
-     * peso = (tiempo * base_por_hora) / total
-     * E_total = Σ (efectividad * peso)
+     *
+     * Fórmula (replica Excel):
+     *   CA       = Σ horas de todas las actividades del operador
+     *   peso_i   = horas_actividad_i / CA
+     *   aporte_i = efectividad_i × peso_i        (igual que K15, U15... del Excel)
+     *   E_total  = Σ aporte_i                    (igual que CB15 del Excel)
      */
     public function weightedEffectiveness(Request $request)
     {
@@ -329,73 +376,71 @@ class ActivityController extends Controller
             'operator:id,name',
             'process:id,name,base_per_hour'
         ])->where('status', 'CLOSED');
-
+ 
         if ($request->filled('date_from'))   $query->whereDate('start_time', '>=', $request->date_from);
         if ($request->filled('date_to'))     $query->whereDate('start_time', '<=', $request->date_to);
         if ($request->filled('operator_id')) $query->where('operator_id', $request->operator_id);
-
+ 
         $activities = $query->get();
-
-        $calcStandard = function ($activity): float {
-            if (!$activity->end_time || !$activity->start_time) return 0.0;
-            $minutes = $activity->start_time->diffInSeconds($activity->end_time) / 60;
-            $base    = (float) ($activity->process->base_per_hour ?? 0);
-            if ($base <= 0) return 0.0;
-            return ($base / 60) * $minutes;
-        };
-
+ 
         $result = $activities
             ->groupBy('operator_id')
-            ->map(function ($group) use ($calcStandard) {
-
-                $totalFactor = $group->sum(function ($a) {
+            ->map(function ($group) {
+ 
+                // CA: total de horas de todas las actividades del operador
+                $totalHoras = $group->sum(function ($a) {
                     if (!$a->start_time || !$a->end_time) return 0;
-                    $minutes = $a->start_time->diffInSeconds($a->end_time) / 60;
-                    $base    = (float) ($a->process->base_per_hour ?? 0);
-                    return $minutes * $base;
+                    return $a->start_time->diffInSeconds($a->end_time) / 3600;
                 });
-
+ 
                 $totalWeighted = 0;
-
-                $activitiesDetail = $group->map(function ($a) use ($calcStandard, $totalFactor, &$totalWeighted) {
-                    $std = $calcStandard($a);
-                    $qty = (float) $a->quantity;
-
+ 
+                $activitiesDetail = $group->map(function ($a) use ($totalHoras, &$totalWeighted) {
+                    $std     = $this->calcStandard($a);
+                    $qty     = (float) $a->quantity;
                     $minutes = ($a->start_time && $a->end_time)
                         ? $a->start_time->diffInSeconds($a->end_time) / 60
                         : 0;
-
-                    $base = (float) ($a->process->base_per_hour ?? 0);
-
-                    $effectiveness = $std > 0 ? ($qty / $std) : 0;
-                    $peso          = $totalFactor > 0 ? (($minutes * $base) / $totalFactor) : 0;
-                    $totalWeighted += ($effectiveness * $peso);
-
+                    $horas   = $minutes / 60;
+                    $base    = (float) ($a->process->base_per_hour ?? 0);
+ 
+                    // % rendimiento de esta actividad
+                    $efectividad = $std > 0 ? ($qty / $std) : 0;
+ 
+                    // peso = horas_actividad / CA  ← igual que Excel
+                    $peso   = $totalHoras > 0 ? ($horas / $totalHoras) : 0;
+ 
+                    // aporte ponderado de esta actividad
+                    $aporte = $efectividad * $peso;
+                    $totalWeighted += $aporte;
+ 
                     return [
                         'activity_id'   => $a->id,
                         'process'       => $a->process->name ?? '—',
                         'minutes'       => round($minutes, 1),
+                        'horas'         => round($horas, 4),
                         'base_per_hour' => $base,
                         'real'          => $qty,
                         'standard'      => round($std, 2),
-                        'effectiveness' => round($effectiveness * 100, 1),
-                        'peso'          => round($peso * 100, 2),
-                        'weighted'      => round(($effectiveness * $peso) * 100, 2),
+                        'effectiveness' => round($efectividad * 100, 1),  // % individual
+                        'peso'          => round($peso * 100, 2),          // % del tiempo total
+                        'weighted'      => round($aporte * 100, 2),        // aporte al ponderado
                     ];
                 });
-
+ 
                 return [
                     'operator_id'            => $group->first()->operator_id,
                     'name'                   => $group->first()->operator->name ?? '—',
+                    'total_horas'            => round($totalHoras, 4),
                     'weighted_effectiveness' => round($totalWeighted * 100, 1),
                     'activities'             => $activitiesDetail->values(),
                 ];
             })
             ->values();
-
+ 
         return response()->json(['data' => $result]);
     }
-
+ 
     /**
      * 🔹 REPORTE MANUAL
      */
@@ -408,7 +453,7 @@ class ActivityController extends Controller
             'end_time'    => 'required|date|after:start_time',
             'quantity'    => 'required|integer|min:0',
         ]);
-
+ 
         try {
             $activity = Activity::create([
                 'operator_id'   => $request->operator_id,
@@ -419,54 +464,54 @@ class ActivityController extends Controller
                 'quantity'      => $request->quantity,
                 'status'        => 'CLOSED',
             ]);
-
+ 
             return response()->json([
                 'message' => 'Reporte registrado correctamente',
                 'data'    => $activity->load(['operator', 'process'])
             ], 201);
-
+ 
         } catch (\Exception $e) {
             return response()->json(['error' => $e->getMessage()], 500);
         }
     }
-
+ 
     /**
- * 🔹 AGREGAR / ACTUALIZAR OBSERVACIÓN
- */
-public function addNote(Request $request, $id)
-{
-    $request->validate([
-        'notes' => 'required|string|max:1000',
-    ]);
-
-    $activity = Activity::findOrFail($id);
-
-    $activity->update(['notes' => $request->notes]);
-
-    ActivityLog::create([
-        'activity_id' => $activity->id,
-        'action'      => 'NOTE',
-        'user_id'     => Auth::id() ?? null,
-        'timestamp'   => now()
-    ]);
-
-    return response()->json([
-        'message' => 'Observación guardada',
-        'data'    => $activity->load(['operator', 'process'])
-    ]);
-}
-
-/**
- * 🔹 OBTENER OBSERVACIÓN DE UNA ACTIVIDAD
- */
-public function getNote($id)
-{
-    $activity = Activity::findOrFail($id);
-
-    return response()->json([
-        'activity_id' => $activity->id,
-        'notes'       => $activity->notes,
-        'updated_at'  => $activity->updated_at,
-    ]);
-}
+     * 🔹 AGREGAR / ACTUALIZAR OBSERVACIÓN
+     */
+    public function addNote(Request $request, $id)
+    {
+        $request->validate([
+            'notes' => 'required|string|max:1000',
+        ]);
+ 
+        $activity = Activity::findOrFail($id);
+ 
+        $activity->update(['notes' => $request->notes]);
+ 
+        ActivityLog::create([
+            'activity_id' => $activity->id,
+            'action'      => 'NOTE',
+            'user_id'     => Auth::id() ?? null,
+            'timestamp'   => now()
+        ]);
+ 
+        return response()->json([
+            'message' => 'Observación guardada',
+            'data'    => $activity->load(['operator', 'process'])
+        ]);
+    }
+ 
+    /**
+     * 🔹 OBTENER OBSERVACIÓN DE UNA ACTIVIDAD
+     */
+    public function getNote($id)
+    {
+        $activity = Activity::findOrFail($id);
+ 
+        return response()->json([
+            'activity_id' => $activity->id,
+            'notes'       => $activity->notes,
+            'updated_at'  => $activity->updated_at,
+        ]);
+    }
 }
