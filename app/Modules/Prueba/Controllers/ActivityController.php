@@ -74,100 +74,200 @@ class ActivityController extends Controller
     /**
      * 🔹 START (FASE 1)
      */
-    public function start(Request $request)
-    {
-        $request->validate([
-            'process_id'  => 'required|exists:processes,id',
-            'operator_id' => 'required|exists:users,id',
+   public function start(Request $request)
+{
+    $request->validate([
+        'process_id'  => 'required|exists:processes,id',
+        'operator_id' => 'required|exists:users,id',
+    ]);
+
+    try {
+        $activity = Activity::create([
+            'process_id'    => $request->process_id,
+            'operator_id'   => $request->operator_id,
+            'supervisor_id' => Auth::id() ?? null,
+            'start_time'    => now(),
+            'status'        => 'OPEN'
         ]);
- 
+
         try {
-            $activity = Activity::create([
-                'process_id'    => $request->process_id,
-                'operator_id'   => $request->operator_id,
-                'supervisor_id' => Auth::id() ?? null,
-                'start_time'    => now(),
-                'status'        => 'OPEN'
+            ActivityLog::create([
+                'activity_id' => $activity->id,
+                'action'      => 'START',
+                'user_id'     => Auth::id() ?? null,
+                'timestamp'   => now()
             ]);
- 
-            if ($activity && $activity->id) {
-                ActivityLog::create([
-                    'activity_id' => $activity->id,
-                    'action'      => 'START',
-                    'user_id'     => Auth::id() ?? null,
-                    'timestamp'   => now()
-                ]);
-            }
- 
-            return response()->json([
-                'message' => 'Actividad iniciada',
-                'data'    => $activity->load(['operator', 'process'])
-            ], 201);
- 
-        } catch (\Exception $e) {
-            return response()->json(['error' => $e->getMessage()], 500);
-        }
+        } catch (\Exception $e) {}
+
+        return response()->json([
+            'message' => 'Actividad iniciada',
+            'data'    => $activity->load(['operator', 'process'])
+        ], 201);
+
+    } catch (\Exception $e) {
+        return response()->json(['error' => $e->getMessage()], 500);
+     }
     }
  
     /**
-     * 🔹 STOP (FASE 2)
-     */
-    public function stop(Request $request, $id)
-    {
-        $request->validate([
-            'quantity' => 'required|integer|min:0'
-        ]);
- 
-        $activity = Activity::findOrFail($id);
- 
-        if (!$activity->isOpen()) {
-            return response()->json(['error' => 'La actividad ya está cerrada'], 400);
-        }
- 
-        $activity->close($request->quantity);
- 
-        return response()->json([
-            'message' => 'Actividad finalizada',
-            'data'    => $activity->load(['operator', 'process'])
-        ]);
+ * 🔹 STOP TIMER (FASE 2) — Detiene el cronómetro
+ */
+public function stopTimer(Request $request, $id)
+{
+    $activity = Activity::findOrFail($id);
+
+    if (!$activity->isOpen()) {
+        return response()->json(['error' => 'Solo actividades abiertas pueden detenerse'], 400);
     }
- 
+
+    $activity->stopTimer();
+
+    return response()->json([
+        'message' => 'Tiempo detenido',
+        'data'    => $activity->load(['operator', 'process'])
+    ]);
+}
+
+/**
+ * 🔹 SUBMIT REPORT (FASE 3)
+ * Guarda el reporte, deja la actividad activa y resetea start_time
+ */
+public function submitReport(Request $request, $id)
+{
+    $request->validate([
+        'quantity' => 'required|integer|min:0'
+    ]);
+
+    $activity = Activity::findOrFail($id);
+
+    if (!$activity->isStopped()) {
+        return response()->json(['error' => 'La actividad debe estar detenida antes de enviar el reporte'], 400);
+    }
+
+    $activity->submitReport(
+        $request->quantity,
+        $request->input('notes')
+    );
+
+    return response()->json([
+        'message' => 'Reporte enviado. Actividad lista para nuevo ciclo.',
+        'data'    => $activity->fresh()->load(['operator', 'process'])
+    ]);
+}
+
+/**
+ * 🔹 STOP (FASE 2 — LEGACY, mantener por compatibilidad)
+ * Ahora hace stopTimer + submitReport en uno solo si se necesita
+ */
+public function stop(Request $request, $id)
+{
+    $request->validate([
+        'quantity' => 'required|integer|min:0'
+    ]);
+
+    $activity = Activity::findOrFail($id);
+
+    // Si está OPEN, detener primero
+    if ($activity->isOpen()) {
+        $activity->stopTimer();
+    }
+
+    if (!$activity->isStopped()) {
+        return response()->json(['error' => 'La actividad ya está cerrada'], 400);
+    }
+
+    $activity->close($request->quantity);
+
+    return response()->json([
+        'message' => 'Actividad finalizada',
+        'data'    => $activity->load(['operator', 'process'])
+    ]);
+}
+
+/**
+ * 🔹 QUICK REPORT — Nuevo reporte para operador con mismo proceso ya cerrado
+ * Crea actividad nueva con start_time y end_time = now()
+ */
+public function quickReport(Request $request)
+{
+    $request->validate([
+        'operator_id' => 'required|exists:users,id',
+        'process_id'  => 'required|exists:processes,id',
+        'quantity'    => 'required|integer|min:0',
+    ]);
+
+    // Verificar que no tenga actividad activa
+    $hasActive = Activity::where('operator_id', $request->operator_id)
+        ->whereIn('status', ['OPEN', 'STOPPED'])
+        ->exists();
+
+    if ($hasActive) {
+        return response()->json(['error' => 'El operador tiene una actividad activa en curso'], 400);
+    }
+
+    try {
+        $now = now();
+
+        $activity = Activity::create([
+            'process_id'    => $request->process_id,
+            'operator_id'   => $request->operator_id,
+            'supervisor_id' => Auth::id() ?? null,
+            'start_time'    => $now,
+            'end_time'      => $now,
+            'quantity'      => $request->quantity,
+            'status'        => 'CLOSED',
+        ]);
+
+        if ($request->filled('notes')) {
+            $activity->update(['notes' => $request->notes]);
+        }
+
+        ActivityLog::create([
+            'activity_id' => $activity->id,
+            'action'      => 'QUICK_REPORT',
+            'user_id'     => Auth::id() ?? null,
+            'timestamp'   => $now,
+        ]);
+
+        return response()->json([
+            'message' => 'Reporte rápido enviado',
+            'data'    => $activity->load(['operator', 'process'])
+        ], 201);
+
+    } catch (\Exception $e) {
+        return response()->json(['error' => $e->getMessage()], 500);
+    }
+}
     /**
      * 🔹 CANCELAR
      */
     public function cancel($id)
-    {
-        $activity = Activity::findOrFail($id);
- 
-        if (!$activity->isOpen()) {
-            return response()->json(['error' => 'Solo actividades abiertas pueden cancelarse'], 400);
-        }
- 
-        $activity->update(['status' => 'CANCELLED', 'end_time' => now()]);
- 
-        ActivityLog::create([
-            'activity_id' => $activity->id,
-            'action'      => 'CANCEL',
-            'user_id'     => Auth::id() ?? null,
-            'timestamp'   => now()
-        ]);
- 
-        return response()->json(['message' => 'Actividad cancelada']);
+{
+    $activity = Activity::findOrFail($id);
+
+    if (!$activity->isActive()) {
+        return response()->json(['error' => 'Solo actividades abiertas pueden cancelarse'], 400);
     }
+
+    $activity->cancel();
+
+    return response()->json([
+        'message' => 'Actividad cancelada'
+    ]);
+}
  
     /**
      * 🔹 LISTAR ABIERTAS
      */
     public function open()
-    {
-        $activities = Activity::with(['operator', 'process'])
-            ->open()
-            ->orderBy('start_time', 'asc')
-            ->get();
- 
-        return response()->json($activities);
-    }
- 
+{
+    $activities = Activity::with(['operator', 'process'])
+        ->whereIn('status', ['OPEN', 'STOPPED'])
+        ->orderBy('start_time', 'asc')
+        ->get();
+
+    return response()->json($activities);
+}
     /**
      * 🔹 HISTORIAL
      */
@@ -440,6 +540,13 @@ class ActivityController extends Controller
  
         return response()->json(['data' => $result]);
     }
+
+
+
+
+
+
+
  
     /**
      * 🔹 REPORTE MANUAL

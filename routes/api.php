@@ -25,6 +25,9 @@ Route::prefix('activities')->group(function () {
     Route::get('/dashboard',      [ActivityController::class, 'dashboard']);
     Route::get('/',               [ActivityController::class, 'index']);
     Route::get('/{id}',           [ActivityController::class, 'show']);
+    Route::post('/activities/{id}/stop-timer',    [ActivityController::class, 'stopTimer']);
+    Route::post('/activities/{id}/submit-report', [ActivityController::class, 'submitReport']);
+    Route::post('/activities/quick-report',       [ActivityController::class, 'quickReport']);
 });
 
 // ── PROCESOS ──────────────────────────────────────────
