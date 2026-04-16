@@ -6,7 +6,7 @@ return [
     'allowed_origins' => [
     'https://prueba-abc123.vercel.app',
     'http://localhost:4200',
-],
+    ],
     'allowed_origins_patterns' => [],
     'allowed_headers' => ['*'],
     'exposed_headers' => [],
