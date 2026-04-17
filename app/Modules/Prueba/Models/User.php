@@ -41,6 +41,7 @@ class User extends Authenticatable
 
     public function activityLogs()
     {
+        
         return $this->hasMany(ActivityLog::class);
     }
 
