@@ -570,6 +570,7 @@ public function quickReport(Request $request)
                 'end_time'      => Carbon::parse($request->end_time,   'America/Caracas')->utc(),
                 'quantity'      => $request->quantity,
                 'status'        => 'CLOSED',
+                'notes'         => $request->notes ?? null,
             ]);
  
             return response()->json([
