@@ -259,39 +259,49 @@ public function quickReport(Request $request)
     /**
      * 🔹 LISTAR ABIERTAS
      */
-    public function open()
+   public function open(Request $request)
 {
-    $activities = Activity::with(['operator', 'process'])
-        ->whereIn('status', ['OPEN', 'STOPPED'])
-        ->orderBy('start_time', 'asc')
-        ->get();
+    $user  = $request->user();
+    $query = Activity::with(['operator', 'process'])
+                     ->whereIn('status', ['OPEN', 'STOPPED'])
+                     ->orderBy('start_time', 'asc');
 
-    return response()->json($activities);
+    // SUPERVISOR solo ve sus propias actividades
+    if ($user && $user->role === 'SUPERVISOR') {
+        $query->where('supervisor_id', $user->id);
+    }
+
+    return response()->json($query->get());
 }
     /**
      * 🔹 HISTORIAL
      */
-    public function history()
-    {
-        return Activity::with(['operator', 'process'])
-            ->where('status', 'CLOSED')
-            ->orderBy('end_time', 'desc')
-            ->limit(10)
-            ->get()
-            ->map(function ($activity) {
-                $start = Carbon::parse($activity->start_time);
-                $end   = Carbon::parse($activity->end_time);
-                return [
-                    'id'               => $activity->id,
-                    'operator'         => $activity->operator->name,
-                    'process'          => $activity->process->name,
-                    'start_time'       => $activity->start_time,
-                    'end_time'         => $activity->end_time,
-                    'duration_minutes' => $start->diffInMinutes($end),
-                    'quantity'         => $activity->quantity,
-                ];
-            });
+    public function history(Request $request)
+{
+    $user  = $request->user();
+    $query = Activity::with(['operator', 'process'])
+                     ->where('status', 'CLOSED')
+                     ->orderBy('end_time', 'desc')
+                     ->limit(50);
+
+    if ($user && $user->role === 'SUPERVISOR') {
+        $query->where('supervisor_id', $user->id);
     }
+
+    return $query->get()->map(function ($activity) {
+        $start = \Carbon\Carbon::parse($activity->start_time);
+        $end   = \Carbon\Carbon::parse($activity->end_time);
+        return [
+            'id'               => $activity->id,
+            'operator'         => $activity->operator->name,
+            'process'          => $activity->process->name,
+            'start_time'       => $activity->start_time,
+            'end_time'         => $activity->end_time,
+            'duration_minutes' => $start->diffInMinutes($end),
+            'quantity'         => $activity->quantity,
+        ];
+    });
+}
  
     /**
      * 🔹 INDEX
