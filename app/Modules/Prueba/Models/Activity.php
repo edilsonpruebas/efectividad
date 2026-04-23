@@ -19,7 +19,9 @@ class Activity extends Model
         'end_time',
         'quantity',
         'status',
-        'notes'
+        'notes',
+        'activity_group_id',
+        'is_group_member',
     ];
 
     protected $casts = [
@@ -48,6 +50,11 @@ class Activity extends Model
     {
         return $this->hasMany(ActivityLog::class);
     }
+    public function group()
+    {
+    return $this->belongsTo(ActivityGroup::class, 'activity_group_id');
+    }
+
 
     // 🔍 SCOPES
 
@@ -181,19 +188,21 @@ class Activity extends Model
         return $this;
     }
 
-    // 🔒 VALIDACIÓN GLOBAL
-    protected static function boot()
+        // 🔒 VALIDACIÓN GLOBAL
+        protected static function boot()
     {
         parent::boot();
 
         static::creating(function ($activity) {
-            // Solo bloquear si no es un reporte CLOSED (los reportes se crean directamente como CLOSED)
-            if (isset($activity->status) && $activity->status === 'CLOSED') {
-                return;
-            }
+            // Ignorar registros CLOSED (históricos)
+            if (isset($activity->status) && $activity->status === 'CLOSED') return;
+
+            // Ignorar actividades que son parte de un grupo (trackers)
+            if (!empty($activity->activity_group_id)) return;
 
             $exists = self::where('operator_id', $activity->operator_id)
                 ->whereIn('status', ['OPEN', 'STOPPED'])
+                ->whereNull('activity_group_id') // solo individuales
                 ->exists();
 
             if ($exists) {

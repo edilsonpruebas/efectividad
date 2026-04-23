@@ -2,6 +2,7 @@
 
 use Illuminate\Support\Facades\Route;
 use App\Modules\Prueba\Controllers\ActivityController;
+use App\Modules\Prueba\Controllers\ActivityGroupController;
 use App\Modules\Prueba\Controllers\ProcessController;
 use App\Modules\Prueba\Controllers\OperatorController;
 use App\Modules\Prueba\Controllers\AuthController;
@@ -33,6 +34,16 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::post('/report-manual',      [ActivityController::class, 'reportManual']);
     });
 
+    // ── GRUPOS DE ACTIVIDAD (ADMIN + SUPERVISOR) ──────
+    Route::middleware('role:ADMIN,SUPERVISOR')->prefix('activity-groups')->group(function () {
+        Route::get('/open',                [ActivityGroupController::class, 'open']);
+        Route::post('/start',              [ActivityGroupController::class, 'start']);
+        Route::post('/{id}/stop-timer',    [ActivityGroupController::class, 'stopTimer']);
+        Route::post('/{id}/submit-report', [ActivityGroupController::class, 'submitReport']);
+        Route::post('/{id}/cancel',        [ActivityGroupController::class, 'cancel']);
+        Route::post('/{id}/note',          [ActivityGroupController::class, 'addNote']);
+    });
+
     // ── PROCESOS — lectura: ADMIN + SUPERVISOR ────────
     Route::middleware('role:ADMIN,SUPERVISOR')->prefix('processes')->group(function () {
         Route::get('/all', [ProcessController::class, 'all']);
@@ -60,4 +71,5 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::patch('/{id}/toggle', [OperatorController::class, 'toggle']);
         Route::delete('/{id}',       [OperatorController::class, 'destroy']);
     });
+
 });
