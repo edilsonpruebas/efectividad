@@ -140,19 +140,20 @@ public function submitReport(Request $request, $id)
         'quantity' => 'required|integer|min:0',
     ]);
 
-    $group = ActivityGroup::findOrFail($id);
+    // ✅ Buscar Activity, no ActivityGroup
+    $activity = Activity::findOrFail($id);
 
-    if (!$group->isStopped()) {
+    if (!$activity->isStopped()) {
         return response()->json([
-            'error' => 'El grupo debe estar detenido antes de enviar el reporte'
+            'error' => 'La actividad debe estar detenida antes de enviar el reporte'
         ], 400);
     }
 
-    $group->submitReport($request->quantity, $request->input('notes'));
+    $activity->submitReport($request->quantity, $request->input('notes'));
 
     return response()->json([
-        'message' => 'Reporte grupal enviado. Grupo listo para nuevo ciclo.',
-        'data'    => $group->fresh()->load(['process', 'activities.operator'])
+        'message' => 'Reporte enviado. Actividad lista para nuevo ciclo.',
+        'data'    => $activity->fresh()->load(['operator', 'process'])
     ]);
 }
 
@@ -307,16 +308,27 @@ public function quickReport(Request $request)
     /**
      * 🔹 INDEX
      */
+   /**
+     * 🔹 INDEX — Reemplaza el método index() existente
+     * Agrega: carga supervisor, logs.user, y campos de auditoría
+     */
     public function index(Request $request)
     {
-        $query = Activity::with(['operator', 'process', 'supervisor']);
+        $query = Activity::with([
+            'operator:id,name',
+            'process:id,name,base_per_hour',
+            'supervisor:id,name',   // ← "Enviado por"
+            'logs.user:id,name',    // ← historial de acciones con nombre de usuario
+        ]);
  
         if ($request->date)        $query->whereDate('start_time', $request->date);
         if ($request->operator_id) $query->where('operator_id', $request->operator_id);
         if ($request->process_id)  $query->where('process_id', $request->process_id);
         if ($request->status)      $query->where('status', $request->status);
  
-        return response()->json($query->orderBy('start_time', 'desc')->get());
+        return response()->json(
+            $query->orderBy('start_time', 'desc')->get()
+        );
     }
  
     /**
@@ -644,8 +656,8 @@ public function quickReport(Request $request)
     }
 
     try {
-        $startTime = Carbon::parse($request->start_time, 'America/Caracas')->utc();
-        $endTime   = Carbon::parse($request->end_time,   'America/Caracas')->utc();
+        $startTime = Carbon::parse($request->start_time);
+        $endTime   = Carbon::parse($request->end_time);
 
         if ($isGroup) {
             // Crear grupo cerrado
@@ -742,6 +754,62 @@ public function quickReport(Request $request)
             'activity_id' => $activity->id,
             'notes'       => $activity->notes,
             'updated_at'  => $activity->updated_at,
+        ]);
+    }
+
+
+    /**
+     * 🔹 UPDATE — Editar un reporte existente
+     * Permite modificar: operator_id, process_id, start_time, end_time, quantity, notes
+     * Solo disponible para actividades CLOSED (historial)
+     */
+    public function update(Request $request, $id)
+    {
+        $request->validate([
+            'operator_id' => 'sometimes|exists:users,id',
+            'process_id'  => 'sometimes|exists:processes,id',
+            'start_time'  => 'sometimes|date',
+            'end_time'    => 'sometimes|date|after:start_time',
+            'quantity'    => 'sometimes|integer|min:0',
+            'notes'       => 'sometimes|nullable|string|max:1000',
+        ]);
+ 
+        $activity = Activity::with(['operator', 'process', 'supervisor'])->findOrFail($id);
+ 
+        // Solo se pueden editar actividades cerradas (historial)
+        if ($activity->status !== 'CLOSED') {
+            return response()->json([
+                'error' => 'Solo se pueden editar actividades cerradas'
+            ], 422);
+        }
+ 
+        $fields = [];
+ 
+        if ($request->has('operator_id')) $fields['operator_id'] = $request->operator_id;
+        if ($request->has('process_id'))  $fields['process_id']  = $request->process_id;
+        if ($request->has('quantity'))    $fields['quantity']     = $request->quantity;
+        if ($request->has('notes'))       $fields['notes']        = $request->notes;
+ 
+        if ($request->has('start_time')) {
+        $fields['start_time'] = Carbon::parse($request->start_time);
+        }
+        if ($request->has('end_time')) {
+        $fields['end_time'] = Carbon::parse($request->end_time);
+        }
+ 
+        $activity->update($fields);
+ 
+        // Log de la edición
+        ActivityLog::create([
+            'activity_id' => $activity->id,
+            'action'      => 'EDIT',
+            'user_id'     => Auth::id() ?? null,
+            'timestamp'   => now(),
+        ]);
+ 
+        return response()->json([
+            'message' => 'Reporte actualizado correctamente',
+            'data'    => $activity->fresh()->load(['operator', 'process', 'supervisor', 'logs.user']),
         ]);
     }
 }

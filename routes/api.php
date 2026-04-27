@@ -31,7 +31,8 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::get('/',                    [ActivityController::class, 'index']);
         Route::get('/{id}',                [ActivityController::class, 'show']);
         Route::post('/quick-report',       [ActivityController::class, 'quickReport']);
-        Route::post('/report-manual',      [ActivityController::class, 'reportManual']);
+        Route::post('/report-manual',      [ActivityController::class, 'reportManual']);    
+        Route::put('/{id}', [ActivityController::class, 'update']);
     });
 
     // ── GRUPOS DE ACTIVIDAD (ADMIN + SUPERVISOR) ──────

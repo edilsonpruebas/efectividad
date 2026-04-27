@@ -31,6 +31,9 @@ class ActivityLog extends Model
 
     public function user()
     {
-        return $this->belongsTo(User::class);
+        return $this->belongsTo(
+            \App\Modules\Prueba\Models\User::class,  // ajusta namespace si difiere
+            'user_id'
+        );
     }
 }
