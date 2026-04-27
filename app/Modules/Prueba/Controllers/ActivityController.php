@@ -721,27 +721,34 @@ public function quickReport(Request $request)
      * 🔹 AGREGAR / ACTUALIZAR OBSERVACIÓN
      */
     public function addNote(Request $request, $id)
-    {
-        $request->validate([
-            'notes' => 'required|string|max:1000',
-        ]);
- 
-        $activity = Activity::findOrFail($id);
- 
-        $activity->update(['notes' => $request->notes]);
- 
+{
+    $request->validate([
+        'notes' => 'required|string|max:1000',
+    ]);
+
+    $activity = Activity::findOrFail($id);
+
+    // ✅ Esto es lo importante (el negocio)
+    $activity->update(['notes' => $request->notes]);
+
+    // ⚠️ Esto es secundario (auditoría)
+    try {
         ActivityLog::create([
             'activity_id' => $activity->id,
             'action'      => 'NOTE',
-            'user_id'     => Auth::id() ?? null,
+            'user_id'     => Auth::id(),
             'timestamp'   => now()
         ]);
- 
-        return response()->json([
-            'message' => 'Observación guardada',
-            'data'    => $activity->load(['operator', 'process'])
-        ]);
+    } catch (\Throwable $e) {
+        // 👇 No rompas el flujo por esto
+        Log::warning('ActivityLog falló (NOTE): ' . $e->getMessage());
     }
+
+    return response()->json([
+        'message' => 'Observación guardada',
+        'data'    => $activity->load(['operator', 'process'])
+    ]);
+}
  
     /**
      * 🔹 OBTENER OBSERVACIÓN DE UNA ACTIVIDAD
