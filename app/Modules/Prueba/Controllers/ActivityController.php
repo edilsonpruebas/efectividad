@@ -540,6 +540,7 @@ public function quickReport(Request $request)
             ]),
         ] : null,
     ]);
+    
 }
  
     /**

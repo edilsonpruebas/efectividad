@@ -7,6 +7,7 @@ use App\Modules\Prueba\Models\User;
 use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Support\Facades\Hash;
+use App\Modules\Prueba\Support\RolePermissions;
 
 class AuthController extends Controller
 {
@@ -18,8 +19,8 @@ class AuthController extends Controller
         ]);
 
         $user = User::where('email', $request->email)
-                    ->whereIn('role', ['ADMIN', 'SUPERVISOR'])
-                    ->first();
+            ->whereIn('role', ['ADMIN', 'SUPERVISOR', 'RRHH', 'FABRICA', 'OPERACIONES', 'VP'])
+            ->first();
 
         if (!$user || !Hash::check($request->password, $user->password)) {
             return response()->json(['message' => 'Credenciales incorrectas'], 401);
@@ -30,6 +31,7 @@ class AuthController extends Controller
         }
 
         $token = $user->createToken('auth_token')->plainTextToken;
+        $permissions = RolePermissions::getPermissions($user->role);
 
         return response()->json([
             'token' => $token,
@@ -38,6 +40,7 @@ class AuthController extends Controller
                 'name'  => $user->name,
                 'email' => $user->email,
                 'role'  => $user->role,
+                'permissions' => $permissions,
             ],
         ]);
     }
