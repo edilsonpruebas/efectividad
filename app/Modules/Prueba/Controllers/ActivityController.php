@@ -67,6 +67,28 @@ class ActivityController extends Controller
             return $efectividad * $peso;
         });
     }
+    // Helper: Valida que hayan pasado al menos los minutos requeridos entre start_time y end_time
+        private function validateMinDuration($activity, $minMinutes = 2): ?string
+    {
+        if (!$activity->start_time || !$activity->end_time) {
+            return 'No se puede calcular la duración sin start_time y end_time';
+        }
+        $minutes = $activity->start_time->diffInSeconds($activity->end_time) / 60;
+        if ($minutes < $minMinutes) {
+            return "No puede detener la actividad hasta que hayan pasado al menos $minMinutes minutos (llevas ".round($minutes,1)." minutos).";
+        }
+        return null;
+    }
+
+    // Helper: Valida que la cantidad no sea más del 150% de la meta estándar
+        private function validateMaxQuantity($quantity, $standard, $factor = 1.5): ?string
+    {
+        $maxAllowed = $standard * $factor;
+        if ($standard > 0 && $quantity > $maxAllowed) {
+            return "La cantidad ($quantity) excede el 150% de la producción estándar calculada ($maxAllowed).";
+        }
+        return null;
+    }
  
  
     // ══════════════════════════════════════════════════════════════════════
@@ -82,6 +104,17 @@ class ActivityController extends Controller
         'process_id'  => 'required|exists:processes,id',
         'operator_id' => 'required|exists:users,id',
     ]);
+
+    // Nueva validación: ¿El operador tiene ALGUNA actividad activa (OPEN o STOPPED)?
+    $existing = \App\Modules\Prueba\Models\Activity::where('operator_id', $request->operator_id)
+        ->whereIn('status', ['OPEN', 'STOPPED'])
+        ->exists();
+
+    if ($existing) {
+        return response()->json([
+            'error' => 'El operador ya tiene una actividad activa (individual o grupal) y no puede iniciar otra hasta cerrarla.'
+        ], 400);
+    }
 
     try {
         $activity = Activity::create([
@@ -108,8 +141,8 @@ class ActivityController extends Controller
 
     } catch (\Exception $e) {
         return response()->json(['error' => $e->getMessage()], 500);
-     }
     }
+}
  
     /**
  * 🔹 STOP TIMER (FASE 2) — Detiene el cronómetro
@@ -122,6 +155,16 @@ public function stopTimer(Request $request, $id)
         return response()->json(['error' => 'Solo actividades abiertas pueden detenerse'], 400);
     }
 
+    // Simular el end_time para validación
+    $activity->end_time = now();
+
+    $durationError = $this->validateMinDuration($activity, 2);
+    if ($durationError) {
+        return response()->json(['error' => $durationError], 422);
+    }
+
+    // Si pasó la validación...
+    $activity->end_time = null; // Limpia antes de llamar método real
     $activity->stopTimer();
 
     return response()->json([
@@ -140,13 +183,19 @@ public function submitReport(Request $request, $id)
         'quantity' => 'required|integer|min:0',
     ]);
 
-    // ✅ Buscar Activity, no ActivityGroup
     $activity = Activity::findOrFail($id);
 
     if (!$activity->isStopped()) {
         return response()->json([
             'error' => 'La actividad debe estar detenida antes de enviar el reporte'
         ], 400);
+    }
+
+    // Valida cantidad máxima 150% de la meta según tiempo
+    $standard = $this->calcStandard($activity);
+    $quantityError = $this->validateMaxQuantity($request->quantity, $standard, 1.5);
+    if ($quantityError) {
+        return response()->json(['error' => $quantityError], 422);
     }
 
     $activity->submitReport($request->quantity, $request->input('notes'));
@@ -278,7 +327,7 @@ public function quickReport(Request $request)
     /**
      * 🔹 HISTORIAL
      */
-    public function history(Request $request)
+public function history(Request $request)
 {
     $user  = $request->user();
     $query = Activity::with(['operator', 'process'])
@@ -293,14 +342,16 @@ public function quickReport(Request $request)
     return $query->get()->map(function ($activity) {
         $start = \Carbon\Carbon::parse($activity->start_time);
         $end   = \Carbon\Carbon::parse($activity->end_time);
+
         return [
             'id'               => $activity->id,
-            'operator'         => $activity->operator->name,
-            'process'          => $activity->process->name,
+            'operator'         => optional($activity->operator)->name ?? 'N/A',
+            'process'          => optional($activity->process)->name ?? 'N/A',
             'start_time'       => $activity->start_time,
             'end_time'         => $activity->end_time,
             'duration_minutes' => $start->diffInMinutes($end),
             'quantity'         => $activity->quantity,
+            'submitted_by'     => $activity->supervisor_id,
         ];
     });
 }

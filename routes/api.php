@@ -21,6 +21,11 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::post('/logout', [AuthController::class, 'logout']);
     Route::get('/me',      [AuthController::class, 'me']);
 
+    // ── HISTORIAL ─────────────────────────────────────
+    Route::middleware('permission:reports.history')->prefix('activities')->group(function () {
+        Route::get('/history', [ActivityController::class, 'history']);
+    });
+
     // ── DASHBOARD Y LISTADO ───────────────────────────
     Route::middleware('permission:dashboard.activities,reports.efectividad')->prefix('activities')->group(function () {
         Route::get('/dashboard', [ActivityController::class, 'dashboard']);
@@ -30,10 +35,7 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::get('/{id}/note', [ActivityController::class, 'getNote']);
     });
 
-    // ── HISTORIAL ─────────────────────────────────────
-    Route::middleware('permission:reports.history')->prefix('activities')->group(function () {
-        Route::get('/history', [ActivityController::class, 'history']);
-    });
+    
 
     // ── OPERACIÓN ─────────────────────────────────────
     Route::middleware('permission:dashboard.activities')->prefix('activities')->group(function () {

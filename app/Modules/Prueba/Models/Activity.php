@@ -194,16 +194,13 @@ class Activity extends Model
         parent::boot();
 
         static::creating(function ($activity) {
-            // Ignorar registros CLOSED (históricos)
+            // Ignorar registros históricos CLOSED
             if (isset($activity->status) && $activity->status === 'CLOSED') return;
 
-            // Ignorar actividades que son parte de un grupo (trackers)
-            if (!empty($activity->activity_group_id)) return;
-
+            // NUEVO: ya no ignores actividades de grupo.
             $exists = self::where('operator_id', $activity->operator_id)
                 ->whereIn('status', ['OPEN', 'STOPPED'])
-                ->whereNull('activity_group_id') // solo individuales
-                ->exists();
+                ->exists(); // Elimina el filtro whereNull('activity_group_id')
 
             if ($exists) {
                 throw new \Exception('El operador ya tiene una actividad activa');
